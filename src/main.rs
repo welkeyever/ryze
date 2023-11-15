@@ -10,8 +10,12 @@ mod uppercase_middleware;
 async fn handler(req: Request<Body>) -> Result<Response<Body>, Error> {  // 注意这里的错误类型 Error
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/") => {
-            let query = req.uri().query().unwrap();
-            Ok(Response::new(Body::from(query.to_owned())))
+            if let Some(query) = req.uri().query() {
+                return Ok(Response::new(Body::from(query.to_owned())));
+            }
+            let mut default = Response::default();
+            *default.body_mut() = Body::from("ok");
+            Ok(default)
         }
         _ => {
             let mut not_found = Response::default();

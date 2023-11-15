@@ -2,9 +2,9 @@ use std::io::Read;
 
 use async_trait::async_trait;
 use bytes::{Buf, Bytes};
+use hyper::{Error, Response};
 use hyper::body;
 use hyper::Body;
-use hyper::Response;
 use hyper::service::Service;
 
 pub struct UppercaseMiddleware<S> {
@@ -22,7 +22,7 @@ impl<S> UppercaseMiddleware<S> {
 #[async_trait]
 impl<S, ReqBody> Service<hyper::Request<ReqBody>> for UppercaseMiddleware<S>
     where
-        S: Service<hyper::Request<ReqBody>, Response=Response<Body>, Error=hyper::Error> + Send + Clone + 'static,
+        S: Service<hyper::Request<ReqBody>, Response=Response<Body>, Error=Error> + Send + Clone + 'static,
         S::Future: Send + 'static,
         ReqBody: Send + 'static,
 {
@@ -42,12 +42,12 @@ impl<S, ReqBody> Service<hyper::Request<ReqBody>> for UppercaseMiddleware<S>
 
             let whole_body = body::to_bytes(body).await?;
             let full_body = whole_body.reader().bytes().collect::<Result<Vec<u8>, _>>().unwrap();
-            let uppercased = full_body.iter().map(|byte| byte.to_ascii_uppercase()).collect::<Vec<u8>>();
+            let uppercased: Vec<_> = full_body.iter().map(|byte| byte.to_ascii_uppercase()).collect();
 
             let body = Body::from(Bytes::from(uppercased));
             let response = Response::from_parts(parts, body);
 
-            Ok::<_, hyper::Error>(response)
+            Ok::<Response<Body>, Error>(response)
         })
     }
 }

@@ -9,6 +9,7 @@ use route_recognizer::{Params, Router};
 use tokio::sync::Mutex;
 
 mod uppercase_middleware;
+mod hertz;
 
 type BoxFut = Pin<Box<dyn Future<Output=Result<Response<Body>, hyper::Error>> + Send>>;
 type Handler = Arc<dyn Fn(Request<Body>) -> BoxFut + Send + Sync>;
@@ -35,32 +36,7 @@ fn hello(_req: Request<Body>) -> BoxFut {
 
 #[tokio::main]
 async fn main() -> hyper::Result<()> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8000));
-
-    let mut router: Router<Handler> = Router::new();
-    router.add("/", Arc::new(index));
-    router.add("/hello", Arc::new(hello));
-
-    let router = Arc::new(Mutex::new(router));
-
-    let make_svc = make_service_fn(move |_| {
-        let router = Arc::clone(&router);
-        async {
-            Ok::<_, hyper::Error>(service_fn(move |req: Request<Body>| {
-                let router = Arc::clone(&router);
-                async move {
-                    match router.lock().await.recognize(req.uri().path()) {
-                        Ok(matched) => (matched.handler)(req).await,
-                        Err(_) => Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::from("404 not found")).unwrap()),
-                    }
-                }
-            }))
-        }
-    });
-
-    let server = Server::bind(&addr).serve(make_svc);
-    println!("Listening on http://{}", addr);
-
-    server.await?;
-    Ok(())
+    let mut h = hertz::Hertz::new();
+    h.get("/ping", Arc::new(hello));
+    h.spin(SocketAddr::from(([127, 0, 0, 1], 8000))).await
 }

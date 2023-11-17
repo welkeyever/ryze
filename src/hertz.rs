@@ -31,7 +31,22 @@ impl Hertz {
 
     // register a route handler for GET requests
     pub fn get(&mut self, path: &str, handler: Handler) {
-        self.router.add(path, handler);
+        let mut combined_handler = handler.clone();
+        for middleware in self.middleware.iter().rev() {
+            let next_handler = combined_handler.clone();
+            let this_middleware = middleware.clone();
+
+            combined_handler = Arc::new(move |req: Request<Body>| {
+                let next_handler = next_handler.clone();
+                Box::pin(async move {
+                    // First, run this middleware
+                    let _ = (this_middleware)(req.clone()).await?;
+                    // Then, run the next handler (either another middleware or the final handler).
+                    next_handler(req).await
+                })
+            });
+        }
+        self.router.add(path, combined_handler);
     }
 
     // start the server

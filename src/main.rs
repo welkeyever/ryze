@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use hyper::Body;
 
-use hertz::{Handler, Hertz, RequestContext};
+use hertz::{Hertz, RequestContext};
 
 mod hertz;
 
@@ -21,8 +21,8 @@ fn hello(ctx: &mut RequestContext) {
 
 #[tokio::main]
 async fn main() -> hyper::Result<()> {
-    let mut h = Hertz::new();
-    h.get("/query", Arc::new(index));
-    h.get("/ping", Arc::new(hello));
+    let h = Hertz::new();
+    h.get("/query", Arc::new(index)).await;
+    h.get("/ping", Arc::new(hello)).await;
     h.spin(SocketAddr::from(([127, 0, 0, 1], 8000))).await
 }

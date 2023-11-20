@@ -64,14 +64,16 @@ impl Hertz {
         let make_svc = make_service_fn(move |_| {
             let router = Arc::clone(&router);
             let middlewares = Arc::clone(&middlewares);
-            async {
+            async move {
                 Ok::<_, hyper::Error>(service_fn(move |req| {
-                    let resp = Response::new(Body::empty());
                     let router = Arc::clone(&router);
                     let middlewares = middlewares.clone();
                     async move {
+                        let resp = Response::new(Body::empty());
+                        let router = Arc::clone(&router);
                         let middlewares = middlewares.clone();
-                        match router.lock().await.recognize(req.uri().path()) {
+                        let router = router.lock().await;
+                        match router.recognize(req.uri().path()) {
                             Ok(matched) => {
                                 let mut middlewares = middlewares.to_vec();
                                 middlewares.push(matched.handler.clone());
@@ -85,7 +87,7 @@ impl Hertz {
                                 ctx.next();  // run through middlewares
                                 Ok::<_, hyper::Error>(ctx.resp)
                             }
-                            Err(err) => Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::from(format!("{}",router))).unwrap())
+                            Err(_err) => Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::from("404 not found")).unwrap())
                         }
                     }
                 }))

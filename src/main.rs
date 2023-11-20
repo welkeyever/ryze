@@ -21,7 +21,18 @@ fn hello(ctx: &mut RequestContext) {
 
 #[tokio::main]
 async fn main() -> hyper::Result<()> {
-    let h = Hertz::new();
+    let mut h = Hertz::new();
+    h.use_fn(Arc::new(|req_ctx| {
+        println!("pre-handle 0");
+        req_ctx.next();
+        println!("post-handle 0");
+    }));
+
+    h.use_fn(Arc::new(|req_ctx| {
+        println!("pre-handle 1");
+        req_ctx.next();
+        println!("post-handle 1");
+    }));
     h.get("/query", Arc::new(index)).await;
     h.get("/ping", Arc::new(hello)).await;
     h.spin(SocketAddr::from(([127, 0, 0, 1], 8000))).await

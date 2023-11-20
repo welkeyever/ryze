@@ -1,63 +1,101 @@
-use std::sync::Arc;
 use std::net::SocketAddr;
-use tokio::sync::Mutex;
-use hyper::service::{make_service_fn, service_fn};
+use std::sync::Arc;
+
 use hyper::{Body, Request, Response, Server, StatusCode};
-use futures::future::Future;
-use std::pin::Pin;
-use route_recognizer::{Params, Router};
+use hyper::service::{make_service_fn, service_fn};
+use route_recognizer::Router;
+use tokio::sync::Mutex;
 
-type BoxFut = Pin<Box<dyn Future<Output=Result<Response<Body>, hyper::Error>> + Send>>;
-type Handler = Arc<dyn Fn(Request<Body>) -> BoxFut + Send + Sync>;
-
-pub struct Hertz {
-    router: Router<Handler>,
-    middleware: Vec<Handler>,
+pub struct RequestContext {
+    pub req: Request<Body>,
+    pub resp: Response<Body>,
+    middlewares: Vec<Handler>,
+    middleware_index: usize,
+    // Add your CX here
+    //'cx: CX
 }
 
+// Handler type
+pub type Handler = Arc<dyn Fn(&mut RequestContext) + Send + Sync>;
+
+// Implementing methods for RequestContext
+impl RequestContext {
+    pub fn next(&mut self) {
+        if self.middleware_index < self.middlewares.len() {
+            let middleware = self.middlewares[self.middleware_index].clone();
+            self.middleware_index += 1;
+            middleware(self);
+        }
+    }
+}
+
+// Definition for Main Hertz Struct
+pub struct Hertz {
+    router: Arc<Mutex<Router<Handler>>>,
+    middlewares: Vec<Handler>,
+}
+
+// Implementing methods for Hertz
 impl Hertz {
-    // create an instance of Hertz
+    // Creates a new instance of Hertz
     pub fn new() -> Self {
         Hertz {
-            router: Router::new(),
-            middleware: Vec::new(),
+            router: Arc::new(Mutex::new(Router::new())),
+            middlewares: Vec::new(),
         }
     }
 
-    // register a middleware
+    // Adds a middleware to the Hertz instance
     pub fn use_fn(&mut self, middleware: Handler) {
-        self.middleware.push(middleware);
+        self.middlewares.push(middleware);
     }
 
-    // register a route handler for GET requests
-    pub fn get(&mut self, path: &str, handler: Handler) {
-        self.router.add(path, handler);
+    // Adds a route to the Hertz instance
+    pub async fn get(&self, path: &str, handler: Handler) {
+        let mut router = self.router.lock().await;
+        router.add(path, handler);
     }
 
-    // start the server
-    // #[tokio::main]
-    pub async fn spin(&self, addr: SocketAddr) -> hyper::Result<()> {
-        let router = Arc::new(Mutex::new(self.router.clone()));
+    // Starts the Hertz instance
+    pub async fn spin(self, addr: SocketAddr) -> hyper::Result<()> {
+        let router = Arc::clone(&self.router);
+        let middlewares = Arc::new(self.middlewares);
 
         let make_svc = make_service_fn(move |_| {
-            let inner_router = Arc::clone(&router);
-            async {
-                Ok::<_, hyper::Error>(service_fn(move |req: Request<Body>| {
-                    let router = Arc::clone(&inner_router);
+            let router = Arc::clone(&router);
+            let middlewares = Arc::clone(&middlewares);
+            async move {
+                Ok::<_, hyper::Error>(service_fn(move |req| {
+                    let router = Arc::clone(&router);
+                    let middlewares = middlewares.clone();
                     async move {
-                        match router.lock().await.recognize(req.uri().path()) {
-                            Ok(matched) => (matched.handler)(req).await,
-                            Err(_) => Ok(Response::builder()
-                                .status(StatusCode::NOT_FOUND)
-                                .body(Body::from("404 not found")).unwrap()),
+                        let resp = Response::new(Body::empty());
+                        let router = Arc::clone(&router);
+                        let middlewares = middlewares.clone();
+                        let router = router.lock().await;
+                        match router.recognize(req.uri().path()) {
+                            Ok(matched) => {
+                                let mut middlewares = middlewares.to_vec();
+                                middlewares.push(matched.handler.clone());
+
+                                let mut ctx = RequestContext {
+                                    req,
+                                    resp,
+                                    middleware_index: 0,
+                                    middlewares,
+                                };
+                                ctx.next();  // run through middlewares
+                                Ok::<_, hyper::Error>(ctx.resp)
+                            }
+                            Err(_err) => Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::from("404 not found")).unwrap())
                         }
                     }
                 }))
             }
         });
 
-        let server = Server::bind(&addr).serve(make_svc);
-        println!("Listening on http://{}", addr);
-        server.await
+        println!(r#"running server on "{}""#, addr);
+        Server::bind(&addr).serve(make_svc).await?;  // Run the server
+        Ok(())
     }
 }

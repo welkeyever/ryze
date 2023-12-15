@@ -1,5 +1,7 @@
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use futures::future::BoxFuture;
 
 use hyper::{Body, Request, Response, Server, StatusCode};
 use hyper::service::{make_service_fn, service_fn};
@@ -16,15 +18,18 @@ pub struct RequestContext {
 }
 
 // Handler type
-pub type Handler = Arc<dyn Fn(&mut RequestContext) + Send + Sync>;
+// pub type Handler = Arc<dyn Fn(&mut RequestContext) + Send + Sync>;
+
+pub type Handler = Arc<dyn Fn(&mut RequestContext) -> BoxFuture<'_, ()> + Send + Sync>;
+
 
 // Implementing methods for RequestContext
 impl RequestContext {
-    pub fn next(&mut self) {
+    pub async fn next(&mut self) {
         if self.middleware_index < self.middlewares.len() {
             let middleware = self.middlewares[self.middleware_index].clone();
             self.middleware_index += 1;
-            middleware(self);
+            middleware(self).await;
         }
     }
 }
@@ -84,7 +89,7 @@ impl Hertz {
                                     middleware_index: 0,
                                     middlewares,
                                 };
-                                ctx.next();  // run through middlewares
+                                ctx.next().await;  // run through middlewares
                                 Ok::<_, hyper::Error>(ctx.resp)
                             }
                             Err(_err) => Ok(Response::builder().status(StatusCode::NOT_FOUND).body(Body::from("404 not found")).unwrap())
